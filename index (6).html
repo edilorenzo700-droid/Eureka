@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Spazio AR">
+<link rel="apple-touch-icon" href="icon.png">
+<title>Spazio AR</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.2/dist/coco-ssd.min.js"></script>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --radius: 22px;
+  --glass: rgba(255,255,255,0.16);
+  --glass-strong: rgba(255,255,255,0.24);
+  --glass-border: rgba(255,255,255,0.38);
+  --glass-shadow: 0 8px 32px rgba(0,0,0,0.22), 0 1.5px 0 rgba(255,255,255,0.45) inset;
+  --blur: blur(30px) saturate(180%);
+  --white: #ffffff;
+  --white70: rgba(255,255,255,0.70);
+  --white45: rgba(255,255,255,0.45);
+  --white20: rgba(255,255,255,0.20);
+  --white10: rgba(255,255,255,0.10);
+  --accent: #0A84FF;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #000;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  touch-action: none;
+  user-select: none;
+}
+
+/* ── VIDEO ── */
+#video {
+  position: fixed; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  z-index: 0;
+}
+#canvas {
+  position: fixed; inset: 0;
+  width: 100%; height: 100%;
+  z-index: 1; pointer-events: none;
+}
+
+/* ── NAVBAR ── */
+#navbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 90;
+  padding: calc(env(safe-area-inset-top, 44px) + 10px) 16px 14px;
+  background: linear-gradient(180deg, rgba(0,0,0,0.6) 0%, transparent 100%);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+#navBack {
+  display: flex; align-items: center; gap: 3px;
+  background: none; border: none; cursor: pointer;
+  color: var(--white); font-size: 17px; font-weight: 400;
+  font-family: 'Inter', sans-serif;
+  padding: 6px 0; -webkit-tap-highlight-color: transparent;
+  flex-shrink: 0;
+}
+#navBack:active { opacity: 0.55; }
+#navBack svg { width: 9px; height: 15px; margin-right: 1px; }
+
+#navCenter { text-align: center; flex: 1; }
+#navCenter h1 {
+  font-size: 15px; font-weight: 600;
+  color: var(--white); letter-spacing: -0.3px; line-height: 1.2;
+}
+#navCenter p { font-size: 12px; color: var(--white70); margin-top: 1px; }
+
+#navBadge {
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.3);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  color: var(--white); font-size: 11px; font-weight: 600;
+  padding: 5px 11px; border-radius: 100px; letter-spacing: 0.5px;
+}
+
+/* ── PERMISSION SCREEN ── */
+#permScreen {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 18px; padding: 40px;
+  background: linear-gradient(160deg, #111827 0%, #1f2937 60%, #111827 100%);
+}
+#permScreen.gone { display: none; }
+.perm-icon {
+  width: 76px; height: 76px;
+  background: var(--glass-strong);
+  border: 1px solid var(--glass-border);
+  border-radius: 22px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 38px;
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  box-shadow: var(--glass-shadow);
+}
+.perm-title {
+  font-size: 28px; font-weight: 700;
+  color: var(--white); letter-spacing: -0.8px;
+}
+.perm-sub {
+  font-size: 15px; color: var(--white70);
+  text-align: center; line-height: 1.65; max-width: 290px;
+}
+#startBtn {
+  padding: 15px 44px; background: var(--accent);
+  color: var(--white); border: none; border-radius: 100px;
+  font-family: 'Inter', sans-serif; font-size: 16px; font-weight: 600;
+  cursor: pointer; letter-spacing: -0.2px;
+  box-shadow: 0 4px 28px rgba(10,132,255,0.45);
+  transition: transform 0.15s, opacity 0.15s;
+}
+#startBtn:active { transform: scale(0.96); opacity: 0.85; }
+
+/* ── LOADING ── */
+#loadBar {
+  position: fixed; top: 0; left: 0; right: 0; height: 3px;
+  background: rgba(255,255,255,0.12); z-index: 300; display: none;
+}
+#loadBar.on { display: block; }
+#loadFill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), #30d158);
+  width: 0%; transition: width 0.5s cubic-bezier(.4,0,.2,1);
+}
+
+/* ── STATUS ── */
+#statusChip {
+  position: fixed; top: 110px; left: 50%; transform: translateX(-50%);
+  z-index: 89; white-space: nowrap;
+  background: var(--glass); border: 1px solid var(--glass-border);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border-radius: 100px; padding: 7px 16px;
+  font-size: 12px; font-weight: 500; color: var(--white70);
+  pointer-events: none;
+  transition: opacity 0.4s;
+  box-shadow: var(--glass-shadow);
+}
+
+/* ── BOTTOM BAR ── */
+#bottomBar {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 90;
+  padding: 0 16px calc(var(--safe-bottom) + 28px);
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+
+/* Pill list */
+#pillList {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  width: 100%; max-height: 210px;
+  overflow-y: auto; -ms-overflow-style: none; scrollbar-width: none;
+  padding: 2px 0;
+}
+#pillList::-webkit-scrollbar { display: none; }
+
+.pill {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 13px 24px;
+  background: var(--glass-strong);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--glass-border);
+  border-radius: 100px;
+  box-shadow: var(--glass-shadow);
+  cursor: pointer; color: var(--white);
+  font-size: 15px; font-weight: 500; letter-spacing: -0.2px;
+  max-width: 360px; width: 100%;
+  transition: transform 0.12s, background 0.12s;
+  -webkit-tap-highlight-color: transparent;
+  animation: pillIn 0.38s cubic-bezier(.34,1.56,.64,1) both;
+}
+.pill:active { transform: scale(0.95); background: rgba(255,255,255,0.34); }
+.pill.selected {
+  background: rgba(10,132,255,0.25);
+  border-color: rgba(10,132,255,0.5);
+}
+.pill-icon { font-size: 19px; }
+.pill-conf { font-size: 11px; color: var(--white45); margin-left: auto; font-weight: 400; }
+
+@keyframes pillIn {
+  from { opacity: 0; transform: translateY(18px) scale(0.88); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Hint card */
+#hintCard {
+  background: var(--glass);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  border-radius: 18px;
+  padding: 15px 20px; text-align: center;
+  max-width: 360px; width: 100%;
+}
+#hintCard h3 {
+  font-size: 16px; font-weight: 600; color: var(--white);
+  margin-bottom: 4px; letter-spacing: -0.3px;
+}
+#hintCard p {
+  font-size: 13px; color: var(--white70); line-height: 1.55;
+}
+
+/* ── IPAD OPTIMIZATIONS ── */
+@media (min-width: 768px) {
+  #bottomBar { padding: 0 40px calc(var(--safe-bottom) + 36px); }
+  #pillList { max-height: 300px; }
+  .pill { max-width: 480px; font-size: 17px; padding: 15px 28px; }
+  #hintCard { max-width: 480px; padding: 18px 24px; }
+  #hintCard h3 { font-size: 18px; }
+  #hintCard p  { font-size: 14px; }
+  #sheetCard   { max-width: 640px; border-radius: 30px 30px 0 0; }
+  .sheet-body  { padding: 28px 32px 0; }
+  .sheet-name  { font-size: 34px; }
+  .formula-main{ font-size: 38px; }
+  .formula-block{ padding: 28px 24px; }
+  .vars-grid   { grid-template-columns: 1fr 1fr 1fr; }
+  #navbar      { padding: calc(env(safe-area-inset-top, 24px) + 14px) 28px 16px; }
+  #navCenter h1{ font-size: 17px; }
+  #startBtn    { font-size: 18px; padding: 17px 52px; }
+  .perm-title  { font-size: 34px; }
+  .perm-sub    { font-size: 16px; max-width: 380px; }
+  .perm-icon   { width: 90px; height: 90px; font-size: 46px; }
+}
+
+/* iPad landscape */
+@media (min-width: 1024px) {
+  #bottomBar {
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 16px;
+    padding: 0 40px calc(var(--safe-bottom) + 40px);
+  }
+  #pillList {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-height: none;
+  }
+  .pill { width: auto; min-width: 160px; max-width: 240px; }
+  #hintCard { width: auto; max-width: 360px; flex-shrink: 0; }
+  #sheetCard { max-width: 700px; margin: 0 auto; }
+}
+#sheet {
+  position: fixed; inset: 0; z-index: 150;
+  display: flex; align-items: flex-end; justify-content: center;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.22s;
+}
+#sheet.open { opacity: 1; pointer-events: all; }
+
+#sheetScrim {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.28);
+  backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+}
+
+#sheetCard {
+  position: relative; z-index: 1;
+  width: 100%; max-width: 500px;
+  background: rgba(28,28,35,0.82);
+  backdrop-filter: blur(44px) saturate(200%);
+  -webkit-backdrop-filter: blur(44px) saturate(200%);
+  border: 1px solid rgba(255,255,255,0.22);
+  border-radius: 26px 26px 0 0;
+  box-shadow: 0 -2px 60px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.5) inset;
+  padding-bottom: calc(var(--safe-bottom) + 30px);
+  transform: translateY(110%);
+  transition: transform 0.42s cubic-bezier(.34,1.06,.64,1);
+  max-height: 92vh; overflow-y: auto;
+  -ms-overflow-style: none; scrollbar-width: none;
+}
+#sheetCard::-webkit-scrollbar { display: none; }
+#sheet.open #sheetCard { transform: translateY(0); }
+
+.sheet-handle {
+  width: 38px; height: 4px; border-radius: 2px;
+  background: rgba(255,255,255,0.28);
+  margin: 12px auto 0;
+}
+
+#sheetClose {
+  position: absolute; top: 14px; right: 16px;
+  width: 28px; height: 28px; border-radius: 50%;
+  background: rgba(255,255,255,0.16);
+  border: 1px solid rgba(255,255,255,0.22);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--white); font-size: 12px; font-weight: 700;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s;
+}
+#sheetClose:active { background: rgba(255,255,255,0.28); }
+
+/* Sheet body */
+.sheet-body { padding: 22px 22px 0; }
+
+.sheet-subject {
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 1.8px; text-transform: uppercase;
+  color: var(--white45); margin-bottom: 8px;
+}
+.sheet-name {
+  font-size: 28px; font-weight: 700;
+  color: var(--white); letter-spacing: -0.8px; margin-bottom: 16px;
+  line-height: 1.15;
+}
+
+/* Formula block */
+.formula-block {
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 18px; padding: 22px 20px;
+  text-align: center; margin-bottom: 18px;
+}
+.formula-main {
+  font-size: 32px; font-weight: 300;
+  color: var(--white); letter-spacing: -0.5px;
+  font-family: 'Georgia', 'Times New Roman', serif;
+  line-height: 1.3; margin-bottom: 8px;
+}
+.formula-alt {
+  font-size: 16px; color: var(--white70);
+  font-family: 'Georgia', serif;
+}
+
+.sheet-desc {
+  font-size: 14px; color: var(--white70);
+  line-height: 1.70; margin-bottom: 20px;
+}
+
+/* Vars grid */
+.vars-title {
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--white45); margin-bottom: 10px;
+}
+.vars-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  margin-bottom: 20px;
+}
+.var-item {
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 13px; padding: 11px 14px;
+}
+.var-sym {
+  font-size: 17px; font-weight: 500; color: var(--white);
+  font-family: 'Georgia', serif; margin-bottom: 3px;
+}
+.var-name { font-size: 11px; color: var(--white45); }
+
+/* Lesson button */
+.lesson-btn {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 15px; border-radius: 15px;
+  background: rgba(10,132,255,0.15);
+  border: 1px solid rgba(10,132,255,0.30);
+  color: #4ca9ff; font-size: 14px; font-weight: 500;
+  cursor: pointer; letter-spacing: -0.1px;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s;
+}
+.lesson-btn:active { background: rgba(10,132,255,0.25); }
+
+/* confidence badge in sheet */
+.conf-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: rgba(48,209,88,0.15); border: 1px solid rgba(48,209,88,0.3);
+  border-radius: 100px; padding: 4px 10px; margin-bottom: 16px;
+  font-size: 12px; color: #30d158; font-weight: 500;
+}
+.conf-dot { width: 6px; height: 6px; border-radius: 50%; background: #30d158; }
+</style>
+</head>
+<body>
+
+<!-- LOADING -->
+<div id="loadBar"><div id="loadFill"></div></div>
+
+<!-- WELCOME SCREEN -->
+<div id="permScreen">
+  <div class="perm-icon">🔭</div>
+  <div class="perm-title">Spazio AR</div>
+  <div class="perm-sub">
+    Punta la fotocamera verso gli oggetti della stanza e scopri le formule matematiche e fisiche che li descrivono.
+  </div>
+  <button id="startBtn" onclick="init()">Inizia</button>
+</div>
+
+<!-- CAMERA -->
+<video id="video" autoplay playsinline muted></video>
+<canvas id="canvas"></canvas>
+
+<!-- NAVBAR -->
+<div id="navbar">
+  <button id="navBack" onclick="history.back()">
+    <svg viewBox="0 0 9 15" fill="none"><path d="M8 1L1 7.5L8 14" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Indietro
+  </button>
+  <div id="navCenter">
+    <h1>Spazio AR</h1>
+    <p>Formule nell'ambiente</p>
+  </div>
+  <div id="navBadge">DEMO 01</div>
+</div>
+
+<!-- STATUS -->
+<div id="statusChip">Avvio in corso…</div>
+
+<!-- BOTTOM -->
+<div id="bottomBar">
+  <div id="pillList"></div>
+  <div id="hintCard">
+    <h3>Muovi lentamente l'iPad</h3>
+    <p>Punta la fotocamera verso pavimento, pareti e oggetti. Poi tocca un pulsante per vedere la formula dell'oggetto.</p>
+  </div>
+</div>
+
+<!-- FORMULA SHEET -->
+<div id="sheet">
+  <div id="sheetScrim" onclick="closeSheet()"></div>
+  <div id="sheetCard">
+    <div class="sheet-handle"></div>
+    <button id="sheetClose" onclick="closeSheet()">✕</button>
+    <div id="sheetBody" class="sheet-body"></div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+// FORMULA DATABASE  (COCO-SSD class → data)
+// ─────────────────────────────────────────────
+const DB = {
+  "person": {
+    icon:"🧍", label:"Persona",
+    subject:"FISICA — MECCANICA",
+    conf: null,
+    desc:"Il corpo umano in equilibrio è soggetto alla forza peso verso il basso e alla reazione normale del pavimento verso l'alto. La seconda legge di Newton ci dice che la somma di tutte le forze è nulla.",
+    main:"ΣF = 0",
+    alt:"P = m · g    N = − P",
+    vars:[{s:"ΣF",n:"Somma forze [N]"},{s:"m",n:"Massa [kg]"},{s:"g",n:"9.81 m/s²"},{s:"N",n:"Reazione vincolare"}]
+  },
+  "chair": {
+    icon:"🪑", label:"Sedia",
+    subject:"FISICA — PRESSIONE",
+    desc:"La sedia trasmette al pavimento una pressione pari al rapporto tra il peso dell'oggetto (e di chi vi siede) e l'area di contatto delle gambe.",
+    main:"P = F / A",
+    alt:"F = m · g",
+    vars:[{s:"P",n:"Pressione [Pa]"},{s:"F",n:"Forza [N]"},{s:"A",n:"Area contatto [m²]"},{s:"g",n:"9.81 m/s²"}]
+  },
+  "couch": {
+    icon:"🛋️", label:"Divano",
+    subject:"FISICA — ELASTICITÀ",
+    desc:"Le molle interne del divano seguono la legge di Hooke: quando un corpo siede, la deformazione xè proporzionale alla forza applicata. L'energia immagazzinata è proporzionale a x².",
+    main:"F = − k · x",
+    alt:"E_el = ½ k x²",
+    vars:[{s:"k",n:"Costante elastica [N/m]"},{s:"x",n:"Deformazione [m]"},{s:"F",n:"Forza elastica [N]"},{s:"E",n:"Energia elastica [J]"}]
+  },
+  "dining table": {
+    icon:"🪵", label:"Tavolo",
+    subject:"FISICA — STATICITÀ",
+    desc:"Il tavolo è in equilibrio statico: la somma delle forze e dei momenti torcenti attorno a qualsiasi punto è nulla. Le gambe ripartiscono il carico in modo uniforme.",
+    main:"ΣF = 0  ,  Στ = 0",
+    alt:"τ = F · d · sin θ",
+    vars:[{s:"ΣF",n:"Somma forze [N]"},{s:"Στ",n:"Somma momenti [N·m]"},{s:"d",n:"Braccio della forza [m]"},{s:"θ",n:"Angolo di applicazione"}]
+  },
+  "laptop": {
+    icon:"💻", label:"Laptop",
+    subject:"ELETTRICITÀ — EFFETTO JOULE",
+    desc:"Il laptop dissipa potenza elettrica in calore attraverso la resistenza dei suoi componenti. La legge di Joule descrive questa dissipazione: P = VI = I²R.",
+    main:"P = V · I",
+    alt:"P = I²R = V² / R",
+    vars:[{s:"P",n:"Potenza [W]"},{s:"V",n:"Tensione [V]"},{s:"I",n:"Corrente [A]"},{s:"R",n:"Resistenza [Ω]"}]
+  },
+  "tv": {
+    icon:"📺", label:"Televisore",
+    subject:"FISICA — ONDE ELETTROMAGNETICHE",
+    desc:"Il segnale televisivo viaggia come onda elettromagnetica. La velocità nel vuoto è sempre c, ma varia la frequenza portante. L'energia di ogni fotone è proporzionale a f.",
+    main:"c = λ · f",
+    alt:"E = h · f  (Planck)",
+    vars:[{s:"c",n:"3 × 10⁸ m/s"},{s:"λ",n:"Lunghezza d'onda [m]"},{s:"f",n:"Frequenza [Hz]"},{s:"h",n:"Costante di Planck"}]
+  },
+  "cell phone": {
+    icon:"📱", label:"Telefono",
+    subject:"FISICA — ONDE EM",
+    desc:"Il telefono trasmette dati via onde radio a frequenze GHz. L'energia di ogni fotone trasmesso è proporzionale alla frequenza, secondo la relazione di Planck E = hf.",
+    main:"c = λ · f",
+    alt:"E = h · f = hc / λ",
+    vars:[{s:"c",n:"3 × 10⁸ m/s"},{s:"λ",n:"Lunghezza d'onda [m]"},{s:"f",n:"Frequenza [Hz]"},{s:"E",n:"Energia fotone [J]"}]
+  },
+  "book": {
+    icon:"📚", label:"Libro",
+    subject:"MATEMATICA — ANALISI",
+    desc:"Come le pagine si accumulano in modo discreto, così l'integrale somma infiniti contributi infinitesimali. Il teorema fondamentale del calcolo collega derivata e integrale.",
+    main:"∫ₐᵇ f(x) dx = F(b) − F(a)",
+    alt:"F′(x) = f(x)",
+    vars:[{s:"∫",n:"Integrale definito"},{s:"F",n:"Primitiva di f"},{s:"f(x)",n:"Funzione integranda"},{s:"dx",n:"Differenziale"}]
+  },
+  "bottle": {
+    icon:"🍶", label:"Bottiglia",
+    subject:"FISICA — FLUIDOSTATICA",
+    desc:"Il liquido esercita pressione sulle pareti della bottiglia che aumenta con la profondità. La legge di Stevin esprime questa relazione. Archimede descrive la spinta verso l'alto.",
+    main:"P = P₀ + ρgh",
+    alt:"F_A = ρ · g · V",
+    vars:[{s:"ρ",n:"Densità liquido [kg/m³]"},{s:"h",n:"Profondità [m]"},{s:"P₀",n:"Pressione atmosferica"},{s:"V",n:"Volume immerso [m³]"}]
+  },
+  "cup": {
+    icon:"☕", label:"Tazza",
+    subject:"FISICA — TERMODINAMICA",
+    desc:"Il calore della tazza si disperde per conduzione, convezione e irraggiamento. La quantità di calore necessaria a variare la temperatura dipende dalla massa e dal calore specifico.",
+    main:"Q = m · c · ΔT",
+    alt:"dQ/dt = − k(T − T₀)  (Newton)",
+    vars:[{s:"Q",n:"Calore [J]"},{s:"m",n:"Massa [kg]"},{s:"c",n:"Calore specifico [J/kg·K]"},{s:"ΔT",n:"Variaz. temperatura [K]"}]
+  },
+  "potted plant": {
+    icon:"🌿", label:"Pianta",
+    subject:"CHIMICA — REAZIONI",
+    desc:"La fotosintesi converte luce, acqua e CO₂ in glucosio e ossigeno. È una reazione endotermica spontanea grazie all'energia radiante. L'energia libera di Gibbs governa la spontaneità.",
+    main:"6CO₂ + 6H₂O → C₆H₁₂O₆ + 6O₂",
+    alt:"ΔG = ΔH − TΔS",
+    vars:[{s:"ΔG",n:"Energia libera di Gibbs"},{s:"ΔH",n:"Entalpia [J]"},{s:"ΔS",n:"Entropia [J/K]"},{s:"T",n:"Temperatura [K]"}]
+  },
+  "vase": {
+    icon:"🏺", label:"Vaso",
+    subject:"GEOMETRIA ANALITICA",
+    desc:"La superficie del vaso è un solido di rivoluzione: si ottiene ruotando una curva f(x) attorno a un asse. Il volume è calcolato con un integrale della sezione circolare.",
+    main:"V = π ∫ [f(x)]² dx",
+    alt:"S = 2π ∫ f(x) √(1+f′²) dx",
+    vars:[{s:"V",n:"Volume [m³]"},{s:"S",n:"Superficie laterale"},{s:"f(x)",n:"Profilo curva"},{s:"π",n:"3.14159…"}]
+  },
+  "clock": {
+    icon:"⏰", label:"Orologio",
+    subject:"FISICA — OSCILLAZIONI",
+    desc:"Il pendolo è un oscillatore armonico. Il suo periodo dipende solo dalla lunghezza del filo e dall'accelerazione gravitazionale, non dalla massa né dall'ampiezza (per piccole oscillazioni).",
+    main:"T = 2π √(L / g)",
+    alt:"x(t) = A · cos(ωt + φ)",
+    vars:[{s:"T",n:"Periodo [s]"},{s:"L",n:"Lunghezza filo [m]"},{s:"g",n:"9.81 m/s²"},{s:"ω",n:"Pulsazione [rad/s]"}]
+  },
+  "refrigerator": {
+    icon:"🧊", label:"Frigorifero",
+    subject:"FISICA — TERMODINAMICA",
+    desc:"Il frigorifero è una macchina termica inversa che trasferisce calore dal freddo al caldo spendendo lavoro. Il coefficiente di prestazione COP misura la sua efficienza.",
+    main:"COP = Q_c / W",
+    alt:"η_Carnot = 1 − T_c / T_h",
+    vars:[{s:"COP",n:"Coeffic. prestazione"},{s:"Q_c",n:"Calore sottratto [J]"},{s:"W",n:"Lavoro speso [J]"},{s:"T",n:"Temperatura [K]"}]
+  },
+  "microwave": {
+    icon:"📡", label:"Microonde",
+    subject:"FISICA — ONDE EM",
+    desc:"Il forno a microonde usa radiazione a 2.45 GHz per eccitare le molecole d'acqua. La frequenza è tale da massimizzare l'assorbimento da parte dei dipoli acqua.",
+    main:"E = h · f",
+    alt:"λ = c / f  ≈  0.122 m",
+    vars:[{s:"E",n:"Energia fotone [J]"},{s:"h",n:"6.626 × 10⁻³⁴ J·s"},{s:"f",n:"2.45 × 10⁹ Hz"},{s:"λ",n:"Lunghezza d'onda [m]"}]
+  },
+  "oven": {
+    icon:"🔥", label:"Forno",
+    subject:"FISICA — IRRAGGIAMENTO",
+    desc:"Il forno trasferisce calore per irraggiamento. La legge di Stefan-Boltzmann descrive la potenza totale irradiata da un corpo nero in funzione della sua temperatura assoluta.",
+    main:"P = σ · A · T⁴",
+    alt:"σ = 5.67 × 10⁻⁸ W / m²K⁴",
+    vars:[{s:"P",n:"Potenza irradiata [W]"},{s:"σ",n:"Costante Stefan-Boltzmann"},{s:"A",n:"Area superficiale [m²]"},{s:"T",n:"Temperatura assoluta [K]"}]
+  },
+  "sink": {
+    icon:"🚰", label:"Lavandino",
+    subject:"FISICA — IDRODINAMICA",
+    desc:"L'acqua nel lavandino segue l'equazione di Bernoulli: lungo una linea di flusso la somma di pressione, energia cinetica e potenziale per unità di volume si conserva.",
+    main:"P + ½ρv² + ρgh = cost",
+    alt:"A₁v₁ = A₂v₂  (continuità)",
+    vars:[{s:"P",n:"Pressione [Pa]"},{s:"ρ",n:"Densità [kg/m³]"},{s:"v",n:"Velocità [m/s]"},{s:"h",n:"Altezza [m]"}]
+  },
+  "car": {
+    icon:"🚗", label:"Auto",
+    subject:"FISICA — CINEMATICA",
+    desc:"Un'auto in accelerazione uniforme segue il moto uniformemente accelerato. Lo spazio percorso cresce con il quadrato del tempo, la velocità linearmente.",
+    main:"s = v₀t + ½at²",
+    alt:"v² = v₀² + 2as",
+    vars:[{s:"s",n:"Spazio [m]"},{s:"v₀",n:"Velocità iniziale [m/s]"},{s:"a",n:"Accelerazione [m/s²]"},{s:"t",n:"Tempo [s]"}]
+  },
+  "bicycle": {
+    icon:"🚲", label:"Bicicletta",
+    subject:"FISICA — MECCANICA ROTATORIA",
+    desc:"La ruota della bicicletta è un disco in rotazione. Il momento angolare L si conserva finché non agisce un momento torcente esterno, garantendo la stabilità.",
+    main:"L = I · ω",
+    alt:"I_disco = ½ m r²",
+    vars:[{s:"L",n:"Momento angolare"},{s:"I",n:"Momento d'inerzia"},{s:"ω",n:"Vel. angolare [rad/s]"},{s:"r",n:"Raggio ruota [m]"}]
+  },
+  "dog": {
+    icon:"🐕", label:"Cane",
+    subject:"BIOLOGIA / TERMODINAMICA",
+    desc:"Un corpo omeotermo mantiene temperatura costante. Il metabolismo produce calore Q che viene disperso per conduzione, convezione e irraggiamento verso l'ambiente.",
+    main:"Q = m · c · ΔT",
+    alt:"Φ_irr = σεAT⁴",
+    vars:[{s:"Q",n:"Calore metabolico [J]"},{s:"c",n:"Calore specifico"},{s:"ε",n:"Emissività corporea"},{s:"T",n:"Temperatura [K]"}]
+  },
+  "cat": {
+    icon:"🐈", label:"Gatto",
+    subject:"FISICA — MOMENTO ANGOLARE",
+    desc:"Il gatto che cade ruota il corpo conservando il momento angolare nullo: contraendo le zampe aumenta ω di una parte mentre estende l'altra, girandosi senza forze esterne.",
+    main:"L = I · ω = cost",
+    alt:"I₁ω₁ = I₂ω₂",
+    vars:[{s:"L",n:"Momento angolare"},{s:"I",n:"Momento d'inerzia"},{s:"ω",n:"Vel. angolare [rad/s]"},{s:"cost",n:"Costante (si conserva)"}]
+  },
+  "sports ball": {
+    icon:"⚽", label:"Pallone",
+    subject:"FISICA — MOTO PARABOLICO",
+    desc:"Un pallone lanciato descrive una parabola: moto rettilineo uniforme in orizzontale e uniformemente decelerato in verticale per la gravità.",
+    main:"y = v₀sinθ · t − ½gt²",
+    alt:"x_max = v₀² · sin2θ / g",
+    vars:[{s:"v₀",n:"Velocità iniziale [m/s]"},{s:"θ",n:"Angolo di lancio"},{s:"g",n:"9.81 m/s²"},{s:"x_max",n:"Gittata massima [m]"}]
+  },
+  "keyboard": {
+    icon:"⌨️", label:"Tastiera",
+    subject:"ELETTRICITÀ — CIRCUITI RC",
+    desc:"Ogni tasto è un interruttore che completa un circuito. La carica e scarica del condensatore nelle matrici di tasto segue un andamento esponenziale con costante τ = RC.",
+    main:"V(t) = V₀(1 − e^(−t/RC))",
+    alt:"τ = R · C",
+    vars:[{s:"V",n:"Tensione [V]"},{s:"R",n:"Resistenza [Ω]"},{s:"C",n:"Capacità [F]"},{s:"τ",n:"Costante di tempo [s]"}]
+  },
+  "umbrella": {
+    icon:"☂️", label:"Ombrello",
+    subject:"FISICA — FLUIDODINAMICA",
+    desc:"L'ombrello aperto è soggetto alla resistenza aerodinamica. La forza di trascinamento dipende dalla densità dell'aria, dalla velocità al quadrato e dall'area frontale.",
+    main:"F_D = ½ρv²C_D A",
+    alt:"Re = ρvL / μ  (Reynolds)",
+    vars:[{s:"ρ",n:"Densità aria [kg/m³]"},{s:"v",n:"Velocità [m/s]"},{s:"C_D",n:"Coefficiente drag"},{s:"A",n:"Area frontale [m²]"}]
+  },
+  "backpack": {
+    icon:"🎒", label:"Zaino",
+    subject:"FISICA — FORZE E ATTRITO",
+    desc:"Lo zaino appeso genera una forza peso che tende a far ruotare il corpo. I muscoli della schiena esercitano il momento opposto per mantenere l'equilibrio.",
+    main:"τ = F · d · sinθ",
+    alt:"W = F · s · cosα",
+    vars:[{s:"τ",n:"Momento torcente [N·m]"},{s:"F",n:"Peso zaino [N]"},{s:"d",n:"Braccio [m]"},{s:"α",n:"Angolo spostamento"}]
+  },
+  "bowl": {
+    icon:"🥣", label:"Ciotola",
+    subject:"GEOMETRIA ANALITICA",
+    desc:"La sezione trasversale di una ciotola è una parabola. La parabola è il luogo dei punti equidistanti dal fuoco e dalla direttrice.",
+    main:"y = x² / (4p)",
+    alt:"dist(P,F) = dist(P,direttrice)",
+    vars:[{s:"p",n:"Distanza fuoco-vertice"},{s:"F",n:"Fuoco (0, p)"},{s:"y",n:"Ordinata punto"},{s:"x",n:"Ascissa punto"}]
+  },
+  "lamp": {
+    icon:"💡", label:"Lampada",
+    subject:"GEOMETRIA ANALITICA",
+    desc:"L'involucro sferico della lampada è descritto dall'equazione della sfera nello spazio tridimensionale. Il centro è nell'origine O(0,0,0) e r è il raggio della sfera.",
+    main:"x² + y² + z² = r²",
+    alt:"(x−a)²+(y−b)²+(z−c)²=r²",
+    vars:[{s:"r",n:"Raggio della sfera [m]"},{s:"(a,b,c)",n:"Centro della sfera"},{s:"O(0,0,0)",n:"Centro nell'origine"},{s:"S=4πr²",n:"Area superficiale"}]
+  },
+  "floor": {
+    icon:"⬛", label:"Pavimento",
+    subject:"GEOMETRIA ANALITICA",
+    desc:"Il pavimento è un piano nello spazio tridimensionale. Ogni piano è identificato da un vettore normale n e dalla sua distanza dall'origine. L'equazione cartesiana è ax + by + cz + d = 0.",
+    main:"ax + by + cz + d = 0",
+    alt:"n⃗ = (a, b, c)  perpendicolare",
+    vars:[{s:"n⃗",n:"Vettore normale"},{s:"a,b,c",n:"Direzione del normale"},{s:"d",n:"Termine noto"},{s:"(x,y,z)",n:"Punto generico"}]
+  },
+  "wall": {
+    icon:"🟫", label:"Parete",
+    subject:"GEOMETRIA ANALITICA",
+    desc:"La parete è un piano verticale. La distanza di un punto P₀ da un piano di equazione ax+by+cz=d è calcolata con la formula del punto-piano.",
+    main:"dist = |ax₀+by₀+cz₀−d| / √(a²+b²+c²)",
+    alt:"ax + by + cz = d",
+    vars:[{s:"dist",n:"Distanza punto-piano"},{s:"P₀",n:"Punto (x₀,y₀,z₀)"},{s:"n⃗",n:"Vettore normale al piano"},{s:"d",n:"Termine noto"}]
+  },
+  "window": {
+    icon:"🪟", label:"Finestra",
+    subject:"OTTICA — LEGGE DI SNELL",
+    desc:"La luce che attraversa il vetro cambia velocità e direzione: si rifrange. La legge di Snell mette in relazione gli angoli con gli indici di rifrazione dei due mezzi.",
+    main:"n₁ · sinθ₁ = n₂ · sinθ₂",
+    alt:"n = c / v",
+    vars:[{s:"n",n:"Indice di rifrazione"},{s:"θ",n:"Angolo incidenza"},{s:"c",n:"3 × 10⁸ m/s"},{s:"v",n:"Velocità nel mezzo"}]
+  },
+  "door": {
+    icon:"🚪", label:"Porta",
+    subject:"FISICA — MOMENTO TORCENTE",
+    desc:"Aprire una porta richiede un momento torcente (torque) rispetto all'asse delle cerniere. Applicare la forza lontano dall'asse riduce la forza necessaria.",
+    main:"τ = F · d · sinθ",
+    alt:"W = τ · Δθ",
+    vars:[{s:"τ",n:"Momento torcente [N·m]"},{s:"F",n:"Forza applicata [N]"},{s:"d",n:"Distanza dal perno [m]"},{s:"θ",n:"Angolo di applicazione"}]
+  },
+  "book": {
+    icon:"📖", label:"Libro",
+    subject:"MATEMATICA — ANALISI",
+    desc:"Come le pagine si accumulano, così l'integrale somma contributi infinitesimali. Il teorema fondamentale del calcolo mette in relazione la derivata con l'integrale.",
+    main:"∫ₐᵇ f(x) dx = F(b) − F(a)",
+    alt:"F′(x) = f(x)",
+    vars:[{s:"∫",n:"Integrale definito"},{s:"F",n:"Primitiva di f"},{s:"f(x)",n:"Funzione integranda"},{s:"dx",n:"Differenziale"}]
+  },
+};
+
+// COCO class aliases
+const ALIAS = {
+  "tvmonitor":"tv","sofa":"couch","pottedplant":"potted plant",
+  "diningtable":"dining table","cellphone":"cell phone",
+  "sportsball":"sports ball","aeroplane":"airplane","aeroplan":"airplane",
+};
+
+const GENERIC = {
+  icon:"📐", label:"Oggetto",
+  subject:"GEOMETRIA EUCLIDEA",
+  desc:"Ogni oggetto nello spazio tridimensionale può essere descritto da coordinate cartesiane. La distanza tra due punti si calcola con il teorema di Pitagora generalizzato.",
+  main:"d = √(Δx² + Δy² + Δz²)",
+  alt:"P = (x, y, z) ∈ ℝ³",
+  vars:[{s:"d",n:"Distanza [m]"},{s:"Δx,Δy,Δz",n:"Differenze coordinate"},{s:"P",n:"Punto nello spazio"},{s:"ℝ³",n:"Spazio tridimensionale"}]
+};
+
+// ─────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────
+let model = null;
+let detections = [];  // current set shown as pills
+let loopId = null;
+
+const video  = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+
+// ─────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────
+async function init() {
+  document.getElementById('permScreen').classList.add('gone');
+  setStatus("Avvio fotocamera…");
+  setLoad(true, 0);
+
+  // Camera
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1080} },
+      audio:false
+    });
+    video.srcObject = stream;
+    await new Promise(r => video.onloadedmetadata = r);
+    resizeCv();
+  } catch(e) {
+    setStatus("Fotocamera non disponibile — modalità demo");
+    setLoad(true,100); setTimeout(()=>setLoad(false),600);
+    startDemo(); return;
+  }
+
+  // Model
+  setStatus("Avvio rilevamento…");
+  setLoad(true, 25);
+  try {
+    model = await cocoSsd.load({base:'mobilenet_v2'});
+    setLoad(true, 90);
+  } catch(e) {
+    setStatus("Rilevamento non disponibile — modalità demo");
+    setLoad(true,100); setTimeout(()=>setLoad(false),600);
+    startDemo(); return;
+  }
+
+  setLoad(true,100); setTimeout(()=>setLoad(false),600);
+  setStatus("Pronto — punta la fotocamera");
+  setTimeout(()=>{ document.getElementById('statusChip').style.opacity='0'; }, 3500);
+
+  startLoop();
+}
+
+window.addEventListener('resize', resizeCv);
+function resizeCv() {
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+
+// ─────────────────────────────────────────────
+// DETECTION LOOP
+// ─────────────────────────────────────────────
+function startLoop() {
+  let last = 0;
+  const INTERVAL = 700; // ms between detections
+
+  async function tick(ts) {
+    loopId = requestAnimationFrame(tick);
+    if (ts - last < INTERVAL) return;
+    last = ts;
+    if (video.readyState < 2) return;
+    try {
+      const preds = await model.detect(video, 8, 0.40);
+      handlePredictions(preds);
+    } catch(_){}
+  }
+  requestAnimationFrame(tick);
+}
+
+function handlePredictions(preds) {
+  const seen = new Set();
+  const found = [];
+
+  for (const p of preds) {
+    let cls = p.class.toLowerCase();
+    if (ALIAS[cls]) cls = ALIAS[cls];
+    if (seen.has(cls)) continue;
+    seen.add(cls);
+    const data = DB[cls] || null;
+    if (!data) continue;
+    found.push({ cls, score: p.score, bbox: p.bbox, data });
+  }
+
+  drawBoxes(found);
+  reconcilePills(found);
+}
+
+// ─────────────────────────────────────────────
+// CANVAS BOXES
+// ─────────────────────────────────────────────
+function drawBoxes(found) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!video.videoWidth) return;
+  const sx = canvas.width  / video.videoWidth;
+  const sy = canvas.height / video.videoHeight;
+
+  for (const det of found) {
+    const [bx,by,bw,bh] = det.bbox;
+    const x=bx*sx, y=by*sy, w=bw*sx, h=bh*sy;
+    const r=10;
+
+    // glow
+    ctx.shadowColor = 'rgba(255,255,255,0.6)';
+    ctx.shadowBlur  = 12;
+
+    // rounded rect
+    ctx.beginPath();
+    ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y);
+    ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+    ctx.lineTo(x+w,y+h-r);
+    ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+    ctx.lineTo(x+r,y+h);
+    ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+    ctx.lineTo(x,y+r);
+    ctx.quadraticCurveTo(x,y,x+r,y);
+    ctx.closePath();
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // label pill
+    const pct  = Math.round(det.score*100);
+    const lbl  = det.data.icon + ' ' + det.data.label;
+    ctx.font = '600 13px Inter, -apple-system, sans-serif';
+    const tw = ctx.measureText(lbl + '  ' + pct + '%').width;
+    const lw = tw + 18, lh = 26;
+    const lx = x, ly = y - lh - 6;
+
+    ctx.fillStyle = 'rgba(28,28,35,0.70)';
+    ctx.beginPath();
+    ctx.roundRect(lx, ly, lw, lh, 7);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(lbl + '  ' + pct + '%', lx + 9, ly + 17);
+
+    // formula preview (center of box)
+    if (w > 80 && h > 50) {
+      ctx.font = 'italic 14px Georgia, serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      ctx.textAlign = 'center';
+      ctx.fillText(det.data.main, x + w/2, y + h/2 + 5);
+      ctx.textAlign = 'left';
+    }
+  }
+}
+
+// ─────────────────────────────────────────────
+// PILLS (reconcile without full re-render)
+// ─────────────────────────────────────────────
+function reconcilePills(found) {
+  const newCls = found.map(d=>d.cls).join('|');
+  const curCls = detections.map(d=>d.cls).join('|');
+  if (newCls === curCls) return; // no change
+
+  detections = found;
+  renderPills();
+}
+
+function renderPills() {
+  const list = document.getElementById('pillList');
+  list.innerHTML = '';
+  detections.forEach((det, i) => {
+    const pill = document.createElement('div');
+    pill.className = 'pill';
+    pill.style.animationDelay = (i * 55) + 'ms';
+    pill.innerHTML = `
+      <span class="pill-icon">${det.data.icon}</span>
+      <span>${det.data.label}</span>
+      <span class="pill-conf">${Math.round(det.score*100)}%</span>
+    `;
+    pill.onclick = () => openSheet(det.data, Math.round(det.score*100));
+    list.appendChild(pill);
+  });
+}
+
+// ─────────────────────────────────────────────
+// SHEET
+// ─────────────────────────────────────────────
+function openSheet(data, conf) {
+  document.querySelectorAll('.pill').forEach(p => {
+    p.classList.toggle('selected', p.querySelector('span:nth-child(2)')?.textContent === data.label);
+  });
+
+  const body = document.getElementById('sheetBody');
+  body.innerHTML = `
+    <div class="sheet-subject">${data.subject}</div>
+    <div class="sheet-name">${data.icon}&nbsp;&nbsp;${data.label}</div>
+    ${conf ? `<div class="conf-badge"><span class="conf-dot"></span>Oggetto rilevato · ${conf}%</div>` : ''}
+    <div class="formula-block">
+      <div class="formula-main">${data.main}</div>
+      <div class="formula-alt">${data.alt}</div>
+    </div>
+    <div class="sheet-desc">${data.desc}</div>
+    <div class="vars-title">Variabili</div>
+    <div class="vars-grid">${data.vars.map(v=>`
+      <div class="var-item">
+        <div class="var-sym">${v.s}</div>
+        <div class="var-name">${v.n}</div>
+      </div>`).join('')}
+    </div>
+    <div class="lesson-btn" onclick="alert('Funzione in arrivo nella prossima versione')">
+      → Apri la lezione nell'app
+    </div>
+  `;
+
+  document.getElementById('sheet').classList.add('open');
+}
+
+function closeSheet() {
+  document.getElementById('sheet').classList.remove('open');
+  document.querySelectorAll('.pill').forEach(p => p.classList.remove('selected'));
+}
+
+// Swipe down to dismiss
+let touchY0 = 0;
+document.getElementById('sheetCard').addEventListener('touchstart', e=>{ touchY0=e.touches[0].clientY; },{passive:true});
+document.getElementById('sheetCard').addEventListener('touchmove', e=>{
+  if (e.touches[0].clientY - touchY0 > 70) closeSheet();
+},{passive:true});
+
+// ─────────────────────────────────────────────
+// DEMO MODE
+// ─────────────────────────────────────────────
+function startDemo() {
+  const demoSeq = ["lamp","window","dining table","potted plant","clock","book","laptop","couch"];
+  let i = 0;
+  const show = () => {
+    const cls = demoSeq[i++ % demoSeq.length];
+    const data = DB[cls];
+    if (!data) return;
+    detections = [{cls, score: 0.88 + Math.random()*0.1, bbox:[40,100,220,200], data}];
+    renderPills();
+  };
+  show();
+  setInterval(show, 5000);
+}
+
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
+function setStatus(msg) {
+  const el = document.getElementById('statusChip');
+  el.textContent = msg;
+  el.style.opacity = '1';
+}
+function setLoad(on, pct) {
+  const bar = document.getElementById('loadBar');
+  bar.classList.toggle('on', on);
+  if (pct !== undefined) document.getElementById('loadFill').style.width = pct + '%';
+}
+</script>
+</body>
+</html>
